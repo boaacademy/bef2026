@@ -1777,7 +1777,53 @@ function classifyRow(row) {
 
   if(hasKw(qfl,['CAF LEAD','Programme CAF LEAD'])) return [qfl,'AD','A valider'];
   if(hasKw(qfl,['Exécutive Master','DAAM SAKANE','CIFPB'])) return [qfl,'GEB','A valider'];
-  if(hasKw(qfl,['Valeurs de BANK OF AFRICA'])) return [qfl,'SC','A valider'];
+  if(hasKw(qfl,['Valeurs de BANK OF AFRICA','Les Valeurs de BANK'])) return [qfl,'SC','A valider'];
+
+  // ── Thématique-based fallback rules ─────────────────────────
+  // COMEX keywords in thématique
+  if(hasKw(qfl,['Commerce Extérieur','Commerce International','Cautions','Opérations Internationales',
+    'Trade Finance','Remise Documentaire','Crédit Documentaire','Financement Bancaire','Marchés Publics',
+    'Global Transaction','GTB','SWIFT'])) {
+    if(isSiege||isEnt) return ['COMEX ENTREPRISE','AJ','A valider'];
+    return ['COMEX PART/PRO','HC','A valider'];
+  }
+  // MONTANA/Analyse Financière
+  if(hasKw(qfl,['Analyse Financière','Business Plan','Montage Financier','Analyse financière'])) return ['MONTANA','HCDO','A valider'];
+  // JUREC keywords
+  if(hasKw(qfl,['Juridique','Recouvrement','Garantie','Sûretés','Contentieux','Financements Bancaires'])) return ['JUREC','HCDO','A valider'];
+  // COMPLIANCE keywords
+  if(hasKw(qfl,['Compliance','Conformité','KYC','Know Your Customer','LCB','Blanchiment','LCBFT'])) return ['COMPLIANCE','HCDO','A valider'];
+  // RO keywords
+  if(hasKw(qfl,['Risque Opérationnel','Risques Opérationnels','Contrôle Permanent','Contrôle Interne',
+    'Cartographie des Risques','Cadre Réglementaire de la Gestion des Risques','Parcours Contrôleurs'])) {
+    if(isSiege) return [qfl,'SC','A valider'];
+    if(isEnt)   return [qfl,'HCDO','A valider'];
+    return [qfl,'HC','A valider'];
+  }
+  // RSE keywords
+  if(hasKw(qfl,['Risques Environnementaux','Finance Verte','Obligations Vertes','ESG','Finance Durable',
+    'Développement Durable','Équateur'])) return [qfl,'AJ','A valider'];
+  // Soft Skills keywords
+  if(hasKw(qfl,['Nouvelles  Pratiques Commerciales','Nouvelles Pratiques Commerciales',
+    'Mon Meilleur Moi','Gestion des Appels Difficiles','Rôle et Comportements',
+    'Prendre la Parole','Prise de Parole','Adopter la Posture','Genre et Handicap'])) {
+    if(isSiege) return [qfl,'SC','A valider'];
+    if(isEnt)   return [qfl,'HCDO','A valider'];
+    return [qfl,'HC','A valider'];
+  }
+  // Management/Pilotage
+  if(hasKw(qfl,['Tableaux de Bord','Tableau de Bord','Piloter, Animer','Performance Opérationnelle'])) {
+    if(isSiege) return [qfl,'SC','A valider'];
+    if(isEnt)   return [qfl,'HCDO','A valider'];
+    return [qfl,'HC','A valider'];
+  }
+  // Parcours Réseau PP
+  if(hasKw(qfl,['Parcours CPG','Parcours Nouvelles Recrues','Offre Multicanal','Opérations de Caisse',
+    'Gestion de Projet'])) return [qfl,'HC','A valider'];
+  // SST
+  if(hasKw(qfl,['SST','Secourime','Sécurité au Travail'])) return [qfl,'AJ','A valider'];
+  // Valeurs BOA
+  if(hasKw(qfl,['Valeurs de BANK','Les Valeurs'])) return [qfl,'SC','A valider'];
 
   return [qfl,'AD','A valider'];
 }
@@ -1821,7 +1867,7 @@ async function processFile(file) {
   const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
   let headerRow = -1;
   for(let i=0;i<Math.min(15,raw.length);i++) {
-    if(raw[i].some(c=>String(c).trim()==='Racine')) { headerRow=i; break; }
+    if(raw[i].some(c=>String(c).trim()==='Racine' || String(c).trim()==='Racine ')) { headerRow=i; break; }
   }
   if(headerRow===-1) { showToast('Colonne "Racine" non trouvée dans le fichier','error'); progress.style.display='none'; return; }
 
@@ -1840,6 +1886,7 @@ async function processFile(file) {
   const iNomN1   = headers.findIndex(h=>h.includes('Nom') && h.includes('+1'));
   const iTheme   = colIdx('thématique') !== -1 ? colIdx('thématique') : colIdx('thematique');
   const iQFL     = headers.findIndex(h=>h.includes('QFL') || h.includes('Front Line'));
+  const iThemeForQFL = colIdx('thématique') !== -1 ? colIdx('thématique') : colIdx('thematique');
   const iType    = colIdx('type de formation');
   const iDate    = colIdx('date demande') !== -1 ? colIdx('date demande') : colIdx('date');
 
@@ -1851,7 +1898,10 @@ async function processFile(file) {
   for(let i=0; i<rows.length; i++) {
     const r = rows[i];
     const get = (idx) => idx>=0 ? String(r[idx]||'').trim() : '';
-    const qflOrig = get(iQFL);
+    // Use QFL column if exists, otherwise derive from Thématique
+    const qflRaw = iQFL >= 0 ? get(iQFL) : '';
+    const themeRaw = get(iThemeForQFL);
+    const qflOrig = qflRaw || themeRaw;
     const typeF   = get(iType);
     const [qflCalc, rpl, decision] = classifyRow({
       qfl: qflOrig, type_formation: typeF,
@@ -1949,7 +1999,7 @@ async function publishData() {
   setSyncState('syncing');
 
   // Clear existing sc_data first
-  await sbFetch('sc_data?id=gte.0', 'DELETE');
+  await sbFetch('sc_data?uploaded_at=gte.2020-01-01', 'DELETE');
 
   // Save to Supabase as new dataset
   const version = 'v_'+new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
